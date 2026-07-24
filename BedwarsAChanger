@@ -13,7 +13,6 @@ local loadout = {
 	Climb = { id = 616003713 },
 }
 
--- What each Animation instance SHOULD hold, keyed by full path, for the watcher to check against
 local expected = {
 	["walk.WalkAnim"] = loadout.Walk.id,
 	["idle.Animation1"] = loadout.Idle.id,
@@ -33,12 +32,14 @@ local function clearAllAnimations()
 	if not hum then return end
 
 	for _, track in pairs(hum:GetPlayingAnimationTracks()) do
+		print("[DIAG] Stopping:", track.Animation.AnimationId, "| Priority:", track.Priority.Name)
 		track:Stop(0)
 		track:Destroy()
 	end
 	local animator = hum:FindFirstChildOfClass("Animator")
 	if animator then
 		for _, track in pairs(animator:GetPlayingAnimationTracks()) do
+			print("[DIAG] Stopping animator track:", track.Animation.AnimationId)
 			track:Stop(0)
 			track:Destroy()
 		end
@@ -51,12 +52,18 @@ local function writeLoadout(animate)
 		if id and id ~= 0 then
 			local folderName, animName = path:match("^(.-)%.(.+)$")
 			local folder = animate:FindFirstChild(folderName)
-			if folder then
+			if not folder then
+				warn("[DIAG] Folder missing:", folderName)
+			else
 				local anim = folder:FindFirstChild(animName)
-				if anim and anim:IsA("Animation") then
+				if not anim or not anim:IsA("Animation") then
+					warn("[DIAG] Animation instance missing:", folderName, animName)
+				else
 					local target = "rbxassetid://" .. tostring(id)
 					if anim.AnimationId ~= target then
+						local old = anim.AnimationId
 						anim.AnimationId = target
+						print("[DIAG] " .. path .. ": " .. old .. " -> " .. target)
 					end
 				end
 			end
@@ -72,15 +79,26 @@ local function writeLoadout(animate)
 	end
 end
 
--- Starts a per-character watcher that reverts any external overwrite back to loadout IDs
-local function startWatcher(animate)
+local function logCurrentlyPlaying(hum)
+	task.wait(0.3)
+	local tracks = hum:GetPlayingAnimationTracks()
+	if #tracks == 0 then
+		warn("[DIAG] No tracks currently playing")
+		return
+	end
+	for _, track in pairs(tracks) do
+		print("[DIAG] Currently playing:", track.Animation.AnimationId, "| Priority:", track.Priority.Name, "| IsPlaying:", track.IsPlaying)
+	end
+end
+
+local function startWatcher(animate, hum)
 	if watcherConn then
 		watcherConn:Disconnect()
 		watcherConn = nil
 	end
 
-	watcherConn = animate.DescendantAdded:Connect(function()
-		-- new descendant added under Animate (rare, but covers full-folder replacement)
+	watcherConn = animate.DescendantAdded:Connect(function(desc)
+		print("[DIAG] Watcher: new descendant added under Animate ->", desc:GetFullName())
 		task.defer(function()
 			if animate.Parent then
 				writeLoadout(animate)
@@ -88,8 +106,8 @@ local function startWatcher(animate)
 		end)
 	end)
 
-	-- Poll-based correction: catches property writes, which DescendantAdded won't catch
 	task.spawn(function()
+		print("[DIAG] Watcher loop started")
 		while animate.Parent do
 			for path, id in pairs(expected) do
 				if id and id ~= 0 then
@@ -100,6 +118,7 @@ local function startWatcher(animate)
 						if anim and anim:IsA("Animation") then
 							local target = "rbxassetid://" .. tostring(id)
 							if anim.AnimationId ~= target then
+								print("[DIAG] Watcher caught drift on", path, "-> reverting to", target)
 								anim.AnimationId = target
 							end
 						end
@@ -108,17 +127,31 @@ local function startWatcher(animate)
 			end
 			task.wait(0.5)
 		end
+		print("[DIAG] Watcher loop ended (Animate no longer parented)")
 	end)
 end
 
 local function applyLoadout()
 	local char = lp.Character
-	if not char then return end
+	if not char then
+		warn("[DIAG] No character")
+		return
+	end
 
+	print("[DIAG] === Applying loadout to:", char.Name, "===")
 	clearAllAnimations()
 
 	local animate = char:FindFirstChild("Animate")
-	if not animate then return end
+	if not animate then
+		warn("[DIAG] Animate script missing")
+		return
+	end
+
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not hum then
+		warn("[DIAG] Humanoid missing")
+		return
+	end
 
 	animate.Disabled = true
 	task.wait(0.1)
@@ -127,20 +160,21 @@ local function applyLoadout()
 
 	task.wait(0.1)
 	animate.Disabled = false
+	print("[DIAG] Animate re-enabled")
 
-	local hum = char:FindFirstChildOfClass("Humanoid")
-	if hum then
-		hum:ChangeState(Enum.HumanoidStateType.Landed)
-		task.wait(0.05)
-		hum:ChangeState(Enum.HumanoidStateType.Running)
-		task.wait(0.05)
-		hum:ChangeState(Enum.HumanoidStateType.Landed)
-	end
+	hum:ChangeState(Enum.HumanoidStateType.Landed)
+	task.wait(0.05)
+	hum:ChangeState(Enum.HumanoidStateType.Running)
+	task.wait(0.05)
+	hum:ChangeState(Enum.HumanoidStateType.Landed)
+	print("[DIAG] State cycled")
 
 	task.wait(0.2)
 	clearAllAnimations()
 
-	startWatcher(animate)
+	logCurrentlyPlaying(hum)
+
+	startWatcher(animate, hum)
 end
 
 lp.CharacterAdded:Connect(function(char)
@@ -149,6 +183,8 @@ lp.CharacterAdded:Connect(function(char)
 	if hum and animate then
 		task.wait(1)
 		applyLoadout()
+	else
+		warn("[DIAG] Timeout waiting for Humanoid/Animate on respawn")
 	end
 end)
 
