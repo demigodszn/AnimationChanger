@@ -1,8 +1,9 @@
--- animation_loadout_direct.lua
--- Bypasses Animate entirely. Plays loadout tracks directly via Animator,
--- keyed to Humanoid state changes. Animate script is disabled permanently.
+-- animation_loadout_v4.lua
+-- Heartbeat-driven movement animations. Run/Walk distinction removed
+-- until we confirm what actually signals "sprinting" in this game.
 
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 local lp = Players.LocalPlayer
 
 local loadout = {
@@ -14,7 +15,9 @@ local loadout = {
 	Climb = { id = 616003713 },
 }
 
-local activeTracks = {}
+local activeTrackName = nil
+local heartbeatConn = nil
+local lastLoggedSpeed = nil
 
 local function loadTrack(animator, id, priority)
 	local anim = Instance.new("Animation")
@@ -24,19 +27,20 @@ local function loadTrack(animator, id, priority)
 	return track
 end
 
-local function stopAll()
-	for name, track in pairs(activeTracks) do
-		if track.IsPlaying then
-			track:Stop(0.1)
+local function playState(name, tracks)
+	if activeTrackName == name then return end
+
+	for otherName, track in pairs(tracks) do
+		if otherName ~= name and track.IsPlaying then
+			track:Stop(0.15)
 		end
 	end
-end
 
-local function playState(name, track)
-	if activeTracks[name] == track and track.IsPlaying then return end
-	stopAll()
-	track:Play(0.1)
-	activeTracks[name] = track
+	local target = tracks[name]
+	if target and not target.IsPlaying then
+		target:Play(0.15)
+	end
+	activeTrackName = name
 end
 
 local function setup(char)
@@ -47,7 +51,6 @@ local function setup(char)
 		return
 	end
 
-	-- Permanently disable Animate so it can't fight the loadout
 	if animate then
 		animate.Disabled = true
 	end
@@ -60,7 +63,6 @@ local function setup(char)
 
 	local tracks = {
 		Idle = loadTrack(animator, loadout.Idle.id, Enum.AnimationPriority.Idle),
-		Idle2 = loadout.Idle.id2 and loadTrack(animator, loadout.Idle.id2, Enum.AnimationPriority.Idle) or nil,
 		Walk = loadTrack(animator, loadout.Walk.id),
 		Run = loadTrack(animator, loadout.Run.id),
 		Jump = loadTrack(animator, loadout.Jump.id, Enum.AnimationPriority.Action),
@@ -73,29 +75,42 @@ local function setup(char)
 	tracks.Run.Looped = true
 	tracks.Climb.Looped = true
 
-	print("[DIAG] Direct tracks loaded, Animate disabled:", animate ~= nil)
+	if heartbeatConn then
+		heartbeatConn:Disconnect()
+	end
 
-	hum.StateChanged:Connect(function(_, newState)
-		if newState == Enum.HumanoidStateType.Running then
-			local speed = hum.MoveDirection.Magnitude
-			if speed > 0 then
-				local isSprinting = hum.WalkSpeed > 16 -- adjust threshold if your game has different base speed
-				playState(isSprinting and "Run" or "Walk", isSprinting and tracks.Run or tracks.Walk)
-			else
-				playState("Idle", tracks.Idle)
-			end
-		elseif newState == Enum.HumanoidStateType.Jumping then
-			playState("Jump", tracks.Jump)
-		elseif newState == Enum.HumanoidStateType.Freefall then
-			playState("Fall", tracks.Fall)
-		elseif newState == Enum.HumanoidStateType.Climbing then
-			playState("Climb", tracks.Climb)
-		elseif newState == Enum.HumanoidStateType.Landed then
-			playState("Idle", tracks.Idle)
+	heartbeatConn = RunService.Heartbeat:Connect(function()
+		local state = hum:GetState()
+
+		if state == Enum.HumanoidStateType.Jumping then
+			playState("Jump", tracks)
+			return
+		elseif state == Enum.HumanoidStateType.Freefall then
+			playState("Fall", tracks)
+			return
+		elseif state == Enum.HumanoidStateType.Climbing then
+			playState("Climb", tracks)
+			return
+		end
+
+		-- DIAG: log WalkSpeed only when it changes, so you can see if sprinting alters it at all
+		if hum.WalkSpeed ~= lastLoggedSpeed then
+			print("[DIAG] WalkSpeed changed to:", hum.WalkSpeed)
+			lastLoggedSpeed = hum.WalkSpeed
+		end
+
+		local speed = hum.MoveDirection.Magnitude
+		if speed > 0 then
+			-- Run branch disabled until we confirm a real sprint signal.
+			-- Currently defaults everyone to Walk regardless of speed.
+			playState("Walk", tracks)
+		else
+			playState("Idle", tracks)
 		end
 	end)
 
-	playState("Idle", tracks.Idle)
+	print("[DIAG] Heartbeat-driven animation loop started (Run disabled pending WalkSpeed data)")
+	playState("Idle", tracks)
 end
 
 lp.CharacterAdded:Connect(function(char)
