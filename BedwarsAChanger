@@ -11,7 +11,7 @@ local loadout = {
 	Run = { id = 4417979645, source = "Mr. Toilet" },
 	Jump = { id = 616008936, source = "Levitation" },
 	Fall = { id = 616005863, source = "Levitation" },
-	Climb = { id = 616003713, source = "Levitation" }, -- Levitation's Climb rides with Jump/Fall since both point to that bundle
+	Climb = { id = 616003713, source = "Levitation" },
 }
 
 local function clearAllAnimations()
@@ -22,6 +22,7 @@ local function clearAllAnimations()
 	if not hum then return end
 
 	for _, track in pairs(hum:GetPlayingAnimationTracks()) do
+		print("[DIAG] Stopping track:", track.Animation.AnimationId, "| Priority:", track.Priority.Name)
 		track:Stop(0)
 		track:Destroy()
 	end
@@ -29,6 +30,7 @@ local function clearAllAnimations()
 	local animator = hum:FindFirstChildOfClass("Animator")
 	if animator then
 		for _, track in pairs(animator:GetPlayingAnimationTracks()) do
+			print("[DIAG] Stopping animator track:", track.Animation.AnimationId)
 			track:Stop(0)
 			track:Destroy()
 		end
@@ -41,22 +43,36 @@ local function updateAnimation(animate, folderName, animName, animId)
 	if not animId or animId == 0 then return end
 
 	local folder = animate:FindFirstChild(folderName)
-	if not folder then return end
+	if not folder then
+		warn("[DIAG] Folder missing:", folderName)
+		return
+	end
 
 	local anim = folder:FindFirstChild(animName)
 	if anim and anim:IsA("Animation") then
+		local old = anim.AnimationId
 		anim.AnimationId = "rbxassetid://" .. tostring(animId)
+		print("[DIAG] " .. folderName .. "/" .. animName .. ": " .. old .. " -> " .. anim.AnimationId)
+	else
+		warn("[DIAG] Animation instance missing:", folderName, animName)
 	end
 end
 
 local function applyLoadout()
 	local char = lp.Character
-	if not char then return end
+	if not char then
+		warn("[DIAG] No character")
+		return
+	end
 
+	print("[DIAG] Applying loadout to:", char.Name)
 	clearAllAnimations()
 
 	local animate = char:FindFirstChild("Animate")
-	if not animate then return end
+	if not animate then
+		warn("[DIAG] Animate script missing")
+		return
+	end
 
 	animate.Disabled = true
 	task.wait(0.1)
@@ -79,6 +95,7 @@ local function applyLoadout()
 
 	task.wait(0.1)
 	animate.Disabled = false
+	print("[DIAG] Animate re-enabled")
 
 	local hum = char:FindFirstChildOfClass("Humanoid")
 	if hum then
@@ -87,10 +104,18 @@ local function applyLoadout()
 		hum:ChangeState(Enum.HumanoidStateType.Running)
 		task.wait(0.05)
 		hum:ChangeState(Enum.HumanoidStateType.Landed)
+		print("[DIAG] Humanoid state cycled to force reload")
 	end
 
 	task.wait(0.2)
 	clearAllAnimations()
+
+	task.wait(0.3)
+	if hum then
+		for _, track in pairs(hum:GetPlayingAnimationTracks()) do
+			print("[DIAG] Now playing:", track.Animation.AnimationId, "| Priority:", track.Priority.Name)
+		end
+	end
 end
 
 lp.CharacterAdded:Connect(function(char)
@@ -99,6 +124,8 @@ lp.CharacterAdded:Connect(function(char)
 	if hum and animate then
 		task.wait(1)
 		applyLoadout()
+	else
+		warn("[DIAG] Timeout waiting for Humanoid/Animate on respawn")
 	end
 end)
 
