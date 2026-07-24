@@ -1,193 +1,108 @@
--- animation_loadout.lua
--- Extracted bundle IDs: Walk=Toy, Idle=CatwalkGram, Run=Mr. Toilet, Jump+Fall+Climb=Levitation
+-- animation_loadout_direct.lua
+-- Bypasses Animate entirely. Plays loadout tracks directly via Animator,
+-- keyed to Humanoid state changes. Animate script is disabled permanently.
 
 local Players = game:GetService("Players")
 local lp = Players.LocalPlayer
 
 local loadout = {
-	Walk = { id = 782843345 },
 	Idle = { id = 133806214992291, id2 = 94970088341563 },
+	Walk = { id = 782843345 },
 	Run = { id = 4417979645 },
 	Jump = { id = 616008936 },
 	Fall = { id = 616005863 },
 	Climb = { id = 616003713 },
 }
 
-local expected = {
-	["walk.WalkAnim"] = loadout.Walk.id,
-	["idle.Animation1"] = loadout.Idle.id,
-	["idle.Animation2"] = loadout.Idle.id2,
-	["run.RunAnim"] = loadout.Run.id,
-	["jump.JumpAnim"] = loadout.Jump.id,
-	["fall.FallAnim"] = loadout.Fall.id,
-	["climb.ClimbAnim"] = loadout.Climb.id,
-}
+local activeTracks = {}
 
-local watcherConn = nil
+local function loadTrack(animator, id, priority)
+	local anim = Instance.new("Animation")
+	anim.AnimationId = "rbxassetid://" .. tostring(id)
+	local track = animator:LoadAnimation(anim)
+	track.Priority = priority or Enum.AnimationPriority.Movement
+	return track
+end
 
-local function clearAllAnimations()
-	local char = lp.Character
-	if not char then return end
-	local hum = char:FindFirstChildOfClass("Humanoid")
-	if not hum then return end
-
-	for _, track in pairs(hum:GetPlayingAnimationTracks()) do
-		print("[DIAG] Stopping:", track.Animation.AnimationId, "| Priority:", track.Priority.Name)
-		track:Stop(0)
-		track:Destroy()
-	end
-	local animator = hum:FindFirstChildOfClass("Animator")
-	if animator then
-		for _, track in pairs(animator:GetPlayingAnimationTracks()) do
-			print("[DIAG] Stopping animator track:", track.Animation.AnimationId)
-			track:Stop(0)
-			track:Destroy()
+local function stopAll()
+	for name, track in pairs(activeTracks) do
+		if track.IsPlaying then
+			track:Stop(0.1)
 		end
 	end
-	task.wait(0.1)
 end
 
-local function writeLoadout(animate)
-	for path, id in pairs(expected) do
-		if id and id ~= 0 then
-			local folderName, animName = path:match("^(.-)%.(.+)$")
-			local folder = animate:FindFirstChild(folderName)
-			if not folder then
-				warn("[DIAG] Folder missing:", folderName)
-			else
-				local anim = folder:FindFirstChild(animName)
-				if not anim or not anim:IsA("Animation") then
-					warn("[DIAG] Animation instance missing:", folderName, animName)
-				else
-					local target = "rbxassetid://" .. tostring(id)
-					if anim.AnimationId ~= target then
-						local old = anim.AnimationId
-						anim.AnimationId = target
-						print("[DIAG] " .. path .. ": " .. old .. " -> " .. target)
-					end
-				end
-			end
-		end
-	end
-
-	local idleFolder = animate:FindFirstChild("idle")
-	if idleFolder then
-		local w1 = idleFolder:FindFirstChild("Animation1Weight")
-		local w2 = idleFolder:FindFirstChild("Animation2Weight")
-		if w1 then w1.Value = 9 end
-		if w2 then w2.Value = 1 end
-	end
+local function playState(name, track)
+	if activeTracks[name] == track and track.IsPlaying then return end
+	stopAll()
+	track:Play(0.1)
+	activeTracks[name] = track
 end
 
-local function logCurrentlyPlaying(hum)
-	task.wait(0.3)
-	local tracks = hum:GetPlayingAnimationTracks()
-	if #tracks == 0 then
-		warn("[DIAG] No tracks currently playing")
-		return
-	end
-	for _, track in pairs(tracks) do
-		print("[DIAG] Currently playing:", track.Animation.AnimationId, "| Priority:", track.Priority.Name, "| IsPlaying:", track.IsPlaying)
-	end
-end
-
-local function startWatcher(animate, hum)
-	if watcherConn then
-		watcherConn:Disconnect()
-		watcherConn = nil
-	end
-
-	watcherConn = animate.DescendantAdded:Connect(function(desc)
-		print("[DIAG] Watcher: new descendant added under Animate ->", desc:GetFullName())
-		task.defer(function()
-			if animate.Parent then
-				writeLoadout(animate)
-			end
-		end)
-	end)
-
-	task.spawn(function()
-		print("[DIAG] Watcher loop started")
-		while animate.Parent do
-			for path, id in pairs(expected) do
-				if id and id ~= 0 then
-					local folderName, animName = path:match("^(.-)%.(.+)$")
-					local folder = animate:FindFirstChild(folderName)
-					if folder then
-						local anim = folder:FindFirstChild(animName)
-						if anim and anim:IsA("Animation") then
-							local target = "rbxassetid://" .. tostring(id)
-							if anim.AnimationId ~= target then
-								print("[DIAG] Watcher caught drift on", path, "-> reverting to", target)
-								anim.AnimationId = target
-							end
-						end
-					end
-				end
-			end
-			task.wait(0.5)
-		end
-		print("[DIAG] Watcher loop ended (Animate no longer parented)")
-	end)
-end
-
-local function applyLoadout()
-	local char = lp.Character
-	if not char then
-		warn("[DIAG] No character")
-		return
-	end
-
-	print("[DIAG] === Applying loadout to:", char.Name, "===")
-	clearAllAnimations()
-
-	local animate = char:FindFirstChild("Animate")
-	if not animate then
-		warn("[DIAG] Animate script missing")
-		return
-	end
-
-	local hum = char:FindFirstChildOfClass("Humanoid")
+local function setup(char)
+	local hum = char:WaitForChild("Humanoid", 10)
+	local animate = char:WaitForChild("Animate", 10)
 	if not hum then
 		warn("[DIAG] Humanoid missing")
 		return
 	end
 
-	animate.Disabled = true
-	task.wait(0.1)
+	-- Permanently disable Animate so it can't fight the loadout
+	if animate then
+		animate.Disabled = true
+	end
 
-	writeLoadout(animate)
+	local animator = hum:FindFirstChildOfClass("Animator")
+	if not animator then
+		animator = Instance.new("Animator")
+		animator.Parent = hum
+	end
 
-	task.wait(0.1)
-	animate.Disabled = false
-	print("[DIAG] Animate re-enabled")
+	local tracks = {
+		Idle = loadTrack(animator, loadout.Idle.id, Enum.AnimationPriority.Idle),
+		Idle2 = loadout.Idle.id2 and loadTrack(animator, loadout.Idle.id2, Enum.AnimationPriority.Idle) or nil,
+		Walk = loadTrack(animator, loadout.Walk.id),
+		Run = loadTrack(animator, loadout.Run.id),
+		Jump = loadTrack(animator, loadout.Jump.id, Enum.AnimationPriority.Action),
+		Fall = loadTrack(animator, loadout.Fall.id, Enum.AnimationPriority.Action),
+		Climb = loadTrack(animator, loadout.Climb.id, Enum.AnimationPriority.Movement),
+	}
 
-	hum:ChangeState(Enum.HumanoidStateType.Landed)
-	task.wait(0.05)
-	hum:ChangeState(Enum.HumanoidStateType.Running)
-	task.wait(0.05)
-	hum:ChangeState(Enum.HumanoidStateType.Landed)
-	print("[DIAG] State cycled")
+	tracks.Idle.Looped = true
+	tracks.Walk.Looped = true
+	tracks.Run.Looped = true
+	tracks.Climb.Looped = true
 
-	task.wait(0.2)
-	clearAllAnimations()
+	print("[DIAG] Direct tracks loaded, Animate disabled:", animate ~= nil)
 
-	logCurrentlyPlaying(hum)
+	hum.StateChanged:Connect(function(_, newState)
+		if newState == Enum.HumanoidStateType.Running then
+			local speed = hum.MoveDirection.Magnitude
+			if speed > 0 then
+				local isSprinting = hum.WalkSpeed > 16 -- adjust threshold if your game has different base speed
+				playState(isSprinting and "Run" or "Walk", isSprinting and tracks.Run or tracks.Walk)
+			else
+				playState("Idle", tracks.Idle)
+			end
+		elseif newState == Enum.HumanoidStateType.Jumping then
+			playState("Jump", tracks.Jump)
+		elseif newState == Enum.HumanoidStateType.Freefall then
+			playState("Fall", tracks.Fall)
+		elseif newState == Enum.HumanoidStateType.Climbing then
+			playState("Climb", tracks.Climb)
+		elseif newState == Enum.HumanoidStateType.Landed then
+			playState("Idle", tracks.Idle)
+		end
+	end)
 
-	startWatcher(animate, hum)
+	playState("Idle", tracks.Idle)
 end
 
 lp.CharacterAdded:Connect(function(char)
-	local hum = char:WaitForChild("Humanoid", 10)
-	local animate = char:WaitForChild("Animate", 10)
-	if hum and animate then
-		task.wait(1)
-		applyLoadout()
-	else
-		warn("[DIAG] Timeout waiting for Humanoid/Animate on respawn")
-	end
+	task.wait(0.5)
+	setup(char)
 end)
 
 if lp.Character then
-	applyLoadout()
+	setup(lp.Character)
 end
