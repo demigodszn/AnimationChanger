@@ -1,0 +1,105 @@
+-- animation_loadout.lua
+-- Extracted bundle IDs from animationData table
+-- Slots: Walk=Toy, Idle=CatwalkGram, Run=Mr. Toilet, Jump+Fall=Levitation
+
+local Players = game:GetService("Players")
+local lp = Players.LocalPlayer
+
+local loadout = {
+	Walk = { id = 782843345, source = "Toy" },
+	Idle = { id = 133806214992291, id2 = 94970088341563, source = "CatwalkGram" },
+	Run = { id = 4417979645, source = "Mr. Toilet" },
+	Jump = { id = 616008936, source = "Levitation" },
+	Fall = { id = 616005863, source = "Levitation" },
+	Climb = { id = 616003713, source = "Levitation" }, -- Levitation's Climb rides with Jump/Fall since both point to that bundle
+}
+
+local function clearAllAnimations()
+	local char = lp.Character
+	if not char then return end
+
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not hum then return end
+
+	for _, track in pairs(hum:GetPlayingAnimationTracks()) do
+		track:Stop(0)
+		track:Destroy()
+	end
+
+	local animator = hum:FindFirstChildOfClass("Animator")
+	if animator then
+		for _, track in pairs(animator:GetPlayingAnimationTracks()) do
+			track:Stop(0)
+			track:Destroy()
+		end
+	end
+
+	task.wait(0.1)
+end
+
+local function updateAnimation(animate, folderName, animName, animId)
+	if not animId or animId == 0 then return end
+
+	local folder = animate:FindFirstChild(folderName)
+	if not folder then return end
+
+	local anim = folder:FindFirstChild(animName)
+	if anim and anim:IsA("Animation") then
+		anim.AnimationId = "rbxassetid://" .. tostring(animId)
+	end
+end
+
+local function applyLoadout()
+	local char = lp.Character
+	if not char then return end
+
+	clearAllAnimations()
+
+	local animate = char:FindFirstChild("Animate")
+	if not animate then return end
+
+	animate.Disabled = true
+	task.wait(0.1)
+
+	updateAnimation(animate, "walk", "WalkAnim", loadout.Walk.id)
+	updateAnimation(animate, "idle", "Animation1", loadout.Idle.id)
+	updateAnimation(animate, "idle", "Animation2", loadout.Idle.id2)
+	updateAnimation(animate, "run", "RunAnim", loadout.Run.id)
+	updateAnimation(animate, "jump", "JumpAnim", loadout.Jump.id)
+	updateAnimation(animate, "fall", "FallAnim", loadout.Fall.id)
+	updateAnimation(animate, "climb", "ClimbAnim", loadout.Climb.id)
+
+	local idleFolder = animate:FindFirstChild("idle")
+	if idleFolder then
+		local weight1 = idleFolder:FindFirstChild("Animation1Weight")
+		local weight2 = idleFolder:FindFirstChild("Animation2Weight")
+		if weight1 then weight1.Value = 9 end
+		if weight2 then weight2.Value = 1 end
+	end
+
+	task.wait(0.1)
+	animate.Disabled = false
+
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if hum then
+		hum:ChangeState(Enum.HumanoidStateType.Landed)
+		task.wait(0.05)
+		hum:ChangeState(Enum.HumanoidStateType.Running)
+		task.wait(0.05)
+		hum:ChangeState(Enum.HumanoidStateType.Landed)
+	end
+
+	task.wait(0.2)
+	clearAllAnimations()
+end
+
+lp.CharacterAdded:Connect(function(char)
+	local hum = char:WaitForChild("Humanoid", 10)
+	local animate = char:WaitForChild("Animate", 10)
+	if hum and animate then
+		task.wait(1)
+		applyLoadout()
+	end
+end)
+
+applyLoadout()
